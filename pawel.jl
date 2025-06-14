@@ -92,6 +92,18 @@ function timeloop(params)
     u0 = vcat(h0, q0)
     du0 = zeros(2N)  # Initial guess for du/dt
 
+    # Calculate static y-limits for h using h0
+    hmin = minimum(h0)
+    hmax = maximum(h0)
+    margin = 0.25
+    ylim_h = (hmin - margin, hmax + margin)
+
+    # Calculate static y-limits for q using q0
+    qmin = minimum(q0)
+    qmax = maximum(q0)
+    margin = 1
+    ylim_q = (qmin - margin, qmax + margin)
+
     tspan = (tstart, tstop) # defines the start and end times for the simulation
 
     # Specify differentiable variables as (true) -> all variables
@@ -111,8 +123,8 @@ function timeloop(params)
     for (i, t) in enumerate(sol.t)
         h = sol[1:N, i]
         q = sol[N+1:2N, i]
-        plt1 = plot(x, h, xlabel="x", ylabel="Water Height h", title="Water Height at t=$(round(t, digits=3))", legend=false, ylim=(minimum(h0), maximum(h0)+params.D))
-        plt2 = plot(x, q, xlabel="x", ylabel="Discharge q", title="Discharge at t=$(round(t, digits=3))", legend=false, ylim=(minimum(q0)-1, maximum(q0)+1))
+        plt1 = plot(x, h, xlabel="x", ylabel="Water Height h", title="Water Height at t=$(round(t, digits=3))", legend=false, ylim=ylim_h)
+        plt2 = plot(x, q, xlabel="x", ylabel="Discharge q", title="Discharge at t=$(round(t, digits=3))", legend=false, ylim=ylim_q)
         plot(plt1, plt2, layout=(2,1))
         frame(anim)
     end
