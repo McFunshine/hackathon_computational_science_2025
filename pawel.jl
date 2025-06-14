@@ -1,6 +1,9 @@
 # Julia script to solve the 1D shallow water equations as a DAE problem
 using NonlinearSolve, LinearAlgebra, Parameters, Plots, Sundials
 
+# Include the bottom topography generator
+include("bottom_topographies.jl")
+
 # This code is a template for solving the 1D shallow water equations (SWE) as a DAE problem.
 # The setup is as follows:
 # 1. Define parameters for the simulation, including gravity, number of grid points,
@@ -13,17 +16,28 @@ using NonlinearSolve, LinearAlgebra, Parameters, Plots, Sundials
 
 
 # --- 1. Parameter setup ---
-function make_parameters()
+function make_parameters(bottom_type="flat")
     N = 200
     g = 9.81
     xstart = 0.0
     xstop = 5.0
     x = range(xstart, xstop, length=N)
     D = 10.0
-    # Flat bottom
-    zb = -D * ones(N)
-    # Wavy bottom
-    #zb = -D .+ 0.4 .* sin.(2pi .* x ./ xstop .* (N-1)/N .* 5)
+    
+    # Use the enhanced bottom topography system
+    all_params = make_all_topographies()
+    zb = get_bottom_profile(bottom_type, all_params)
+    
+    # If the selected bottom doesn't fit our grid, interpolate it
+    if length(zb) != N
+        # Fallback to original options
+        if bottom_type == "wavy"
+            zb = -D .+ 0.4 .* sin.(2π .* x ./ xstop .* (N-1)/N .* 5)
+        else
+            zb = -D * ones(N)  # Flat bottom default
+        end
+    end
+    
     tstart = 0.0
     tstop = 1.0
     return (; g, N, x, D, zb, tstart, tstop)
@@ -119,13 +133,81 @@ function timeloop(params)
     sol = solve(dae_prob, IDA(), reltol=1e-8, abstol=1e-8, saveat=save_times) # solves the DAE problem using default settings
 
     # --- 5. a Live/Animated Plots ---
+    # Get initial conditions for the static reference
+    h_initial, q_initial = initial_conditions(params)
+    
     anim = Animation()
     for (i, t) in enumerate(sol.t)
         h = sol[1:N, i]
         q = sol[N+1:2N, i]
-        plt1 = plot(x, h, xlabel="x", ylabel="Water Height h", title="Water Height at t=$(round(t, digits=3))", legend=false, ylim=ylim_h)
-        plt2 = plot(x, q, xlabel="x", ylabel="Discharge q", title="Discharge at t=$(round(t, digits=3))", legend=false, ylim=ylim_q)
-        plot(plt1, plt2, layout=(2,1))
+        
+        # LEFT PLOT: Exact same style as all_bottom_topographies.png
+        plt_left = plot(size=(400, 400))
+        
+        # Plot the bottom profile (filled brown - exactly like all_bottom_topographies)
+        plot!(plt_left, x, zb, 
+              linewidth=3, 
+              color=:saddlebrown,
+              fillto=minimum(zb)-1, 
+              fillcolor=:saddlebrown,
+              alpha=0.7,
+              label="")
+        
+        # Add a water surface for reference (calm water - exactly like all_bottom_topographies)
+        water_surface = fill(0.0, length(x))
+        plot!(plt_left, x, water_surface, 
+              linewidth=2,
+              color=:blue,
+              label="",
+              linestyle=:dash)
+        
+        # Fill water area (exactly like all_bottom_topographies)
+        plot!(plt_left, x, zb,
+              fillto=water_surface,
+              fillcolor=:lightblue,
+              alpha=0.4,
+              linewidth=0,
+              label="")
+        
+        xlabel!(plt_left, "Distance x [m]")
+        ylabel!(plt_left, "Elevation [m]")
+        title!(plt_left, "Reference Setup")
+        ylims!(plt_left, minimum(zb) - 1, maximum(zb) + 2)
+        
+        # RIGHT PLOT: Dynamic simulation
+        plt_right = plot(size=(400, 400))
+        
+        # Plot bottom profile
+        plot!(plt_right, x, zb, 
+              linewidth=3, 
+              color=:saddlebrown,
+              fillto=minimum(zb)-2, 
+              fillcolor=:saddlebrown,
+              alpha=0.8,
+              label="Bottom")
+        
+        # Plot current water surface
+        current_water_surface = h .+ zb
+        plot!(plt_right, x, current_water_surface, 
+              linewidth=3,
+              color=:red,
+              label="Current Water")
+        
+        # Fill current water area
+        plot!(plt_right, x, zb,
+              fillto=current_water_surface,
+              fillcolor=:lightcoral,
+              alpha=0.4,
+              linewidth=0,
+              label="")
+        
+                 xlabel!(plt_right, "x [m]")
+         ylabel!(plt_right, "Elevation [m]")
+         title!(plt_right, "t=$(round(t, digits=3))s")
+         ylims!(plt_right, -0.5, 0.5)  # Zoom in to surface: -50cm to +50cm
+        
+        # Side-by-side layout
+        plot(plt_left, plt_right, layout=(1,2), size=(1000, 500))
         frame(anim)
     end
     gif(anim, "swe_live.gif", fps=20)
@@ -137,16 +219,133 @@ end
 function plot_solution(solution, params)
     N = params.N
     x = params.x
-    h = solution[1:N, end]
-    q = solution[N+1:2N, end]
-    plt1 = plot(x, h, xlabel="x", ylabel="Water Height h", title="Final Water Height", legend=false)
-    plt2 = plot(x, q, xlabel="x", ylabel="Discharge q", title="Final Discharge", legend=false)
-    plot(plt1, plt2, layout=(2,1))
+    zb = params.zb
+    h_final = solution[1:N, end]
+    q_final = solution[N+1:2N, end]
+    
+    # Get initial conditions for comparison
+    h_initial, q_initial = initial_conditions(params)
+    
+    # LEFT PLOT: Static geometry with initial conditions (like the overview plots)
+    plt1 = plot(size=(400, 300))
+    
+    # Plot bottom profile
+    plot!(plt1, x, zb, 
+          linewidth=3, 
+          color=:saddlebrown,
+          fillto=minimum(zb)-2, 
+          fillcolor=:saddlebrown,
+          alpha=0.8,
+          label="Bottom Profile")
+    
+    # Plot initial water surface
+    initial_water_surface = h_initial .+ zb
+    plot!(plt1, x, initial_water_surface, 
+          linewidth=3,
+          color=:blue,
+          label="Initial Water Surface")
+    
+    # Fill water area (initial)
+    plot!(plt1, x, zb,
+          fillto=initial_water_surface,
+          fillcolor=:lightblue,
+          alpha=0.4,
+          linewidth=0,
+          label="Initial Water")
+    
+    xlabel!(plt1, "Distance x [m]")
+    ylabel!(plt1, "Elevation [m]")
+    title!(plt1, "Initial Setup")
+    
+    # RIGHT PLOT: Final simulation results
+    plt2 = plot(size=(400, 300))
+    
+    # Plot bottom profile
+    plot!(plt2, x, zb, 
+          linewidth=3, 
+          color=:saddlebrown,
+          fillto=minimum(zb)-2, 
+          fillcolor=:saddlebrown,
+          alpha=0.8,
+          label="Bottom Profile")
+    
+    # Plot final water surface
+    final_water_surface = h_final .+ zb
+    plot!(plt2, x, final_water_surface, 
+          linewidth=3,
+          color=:red,
+          label="Final Water Surface")
+    
+    # Fill water area (final)
+    plot!(plt2, x, zb,
+          fillto=final_water_surface,
+          fillcolor=:lightcoral,
+          alpha=0.4,
+          linewidth=0,
+          label="Final Water")
+    
+    xlabel!(plt2, "Distance x [m]")
+    ylabel!(plt2, "Elevation [m]")
+    title!(plt2, "After Simulation")
+    
+    # BOTTOM PLOT: Discharge evolution
+    plt3 = plot(x, q_initial, linewidth=2, color=:blue, label="Initial Discharge", linestyle=:dash)
+    plot!(plt3, x, q_final, linewidth=3, color=:red, label="Final Discharge")
+    xlabel!(plt3, "Distance x [m]")
+    ylabel!(plt3, "Discharge q [m²/s]")
+    title!(plt3, "Discharge Comparison")
+    
+    # Combine in layout: [Initial | Final]
+    #                    [  Discharge    ]
+    plot(plt1, plt2, plt3, layout=@layout([a b; c{0.4h}]), size=(1000, 700))
 end
 
-# --- 6. Main script ---
-# Set up parameters
-params = make_parameters()
-# Call the time loop function
-solution = timeloop(params)
-plot_solution(solution, params)
+# --- 6. Demo function to try different bottoms ---
+function demo_different_bottoms()
+    println("🌊 Running simulations with different bottom topographies...")
+    
+    # List of interesting bottoms to try
+    bottom_types = ["flat", "triangle", "sudden_drop", "volcano", "staircase"]
+    
+    for (i, bottom_type) in enumerate(bottom_types)
+        println("\n--- Running simulation $(i)/$(length(bottom_types)): $(bottom_type) ---")
+        
+        # Set up parameters with specific bottom
+        params = make_parameters(bottom_type)
+        
+        # Run simulation
+        solution = timeloop(params)
+        
+        # Plot results
+        p = plot_solution(solution, params)
+        
+        # Save plot
+        filename = "simulation_$(bottom_type).png"
+        savefig(p, filename)
+        println("Saved results to: $(filename)")
+    end
+    
+    println("\n✨ All simulations complete!")
+end
+
+# --- 7. Main script ---
+function run_single_simulation(bottom_type="flat")
+    println("🌊 Running shallow water simulation with $(bottom_type) bottom...")
+    
+    # Set up parameters
+    params = make_parameters(bottom_type)
+    
+    # Call the time loop function
+    solution = timeloop(params)
+    
+    # Plot results
+    plot_solution(solution, params)
+    
+    return solution, params
+end
+
+# Run a single simulation (you can change the bottom type here!)
+solution, params = run_single_simulation("triangle")
+
+# Uncomment the line below to run demo with multiple bottom types
+# demo_different_bottoms()
