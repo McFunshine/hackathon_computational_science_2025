@@ -106,11 +106,12 @@ function timeloop(params)
     u0 = vcat(h0, q0)
     du0 = zeros(2N)  # Initial guess for du/dt
 
-    # Calculate static y-limits for h using h0
-    hmin = minimum(h0)
-    hmax = maximum(h0)
+    # Calculate static y-limits for zeta using zeta0
+    zeta0 = h0 .+ zb
+    zetamin = minimum(zeta0)
+    zetamax = maximum(zeta0)
     margin = 0.25
-    ylim_h = (hmin - margin, hmax + margin)
+    ylim_zeta = (zetamin - margin, zetamax + margin)
 
     # Calculate static y-limits for q using q0
     qmin = minimum(q0)
